@@ -7,6 +7,7 @@ from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 import pickle
 from datetime import datetime
+import tempfile
 
 SCOPES = [
     'https://www.googleapis.com/auth/calendar',
@@ -93,7 +94,7 @@ if not st.session_state['flow_started']:
                 I'm your smart assistant that saves your calendar when school life gets crazy. 
                 As a college student handling tons of classes, clubs, and random emails, 
                 it's way too easy to forget what you promised to do. I scan your inbox 
-                for hidden tasks or deadlines and help you throw them right onto your calendar!
+                for hidden tasks or deadlines and help you add them right onto your calendar!
             </p>
             <hr style='border-top: 1px solid #D7CCC8;'>
             <p style='font-size: 0.95em; color: #8C7A6B; line-height: 1.5em; text-align: center;'>
@@ -116,9 +117,21 @@ st.markdown("<h1 style='text-align: center;'>✨ Your Smart Context Bridger</h1>
 st.markdown("<p style='text-align: center; color: #8D7B68;'>Let's look into your recent communications to find promises and add them straight to your calendar.</p>", unsafe_allow_html=True)
 st.markdown("---")
 
-# Verify credentials file exists upfront to keep things error-free
-if not os.path.exists('credentials.json'):
-    st.error("🔑 Connection File Missing: Please make sure 'credentials.json' from your Google Cloud Console is renamed and saved in your smart-context-bridger folder.")
+# --- CREDENTIAL RESOLUTION MANAGER (LOCAL FILE OR STREAMLIT CLOUD SECRETS) ---
+
+# Helper to look up or generate a credentials source dictionary safely
+def load_secrets_dict():
+    if os.path.exists('credentials.json'):
+        with open('credentials.json', 'r') as f:
+            return json.load(f)
+    elif 'google_credentials' in st.secrets:
+        # Pull straight from the secure Streamlit cloud setting panel dictionary
+        return dict(st.secrets['google_credentials'])
+    return None
+
+# Soft check validation fallback setup
+if load_secrets_dict() is None:
+    st.error("🔑 Connection File Missing: Please make sure 'credentials.json' from your Google Cloud Console is saved in your local folder or configured in Streamlit Cloud Secrets.")
     st.stop()
 
 def get_google_credentials():
@@ -126,14 +139,26 @@ def get_google_credentials():
     if os.path.exists('token.pickle'):
         with open('token.pickle', 'rb') as token:
             creds = pickle.load(token)
+            
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open('token.pickle', 'wb') as token:
-            pickle.dump(creds, token)
+            secrets_data = load_secrets_dict()
+            
+            # Streamlit Cloud needs a temporary file path to pass to the OAuth library flow
+            with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.json') as tmp_file:
+                json.dump(secrets_data, tmp_file)
+                tmp_file_path = tmp_file.name
+                
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(tmp_file_path, SCOPES)
+                creds = flow.run_local_server(port=0)
+                with open('token.pickle', 'wb') as token:
+                    pickle.dump(creds, token)
+            finally:
+                os.unlink(tmp_file_path) # Clean up temporary directory file path safely
+                
     return creds
 
 def add_to_google_calendar(service, summary, deadline):
