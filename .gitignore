@@ -1,0 +1,9 @@
+workspace.db
+__pycache__/
+*.pyc
+.env
+# Private Google Credentials
+credentials.json
+token.pickle
+.venv/
+__pycache__/
